@@ -1,0 +1,45 @@
+[project]
+name = "rowdb"
+version = "0.1.0"
+description = "RowDB is a flexible, open-source key-value database that stores data natively as NDJSON."
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+keywords = [
+    "database",
+    "nosql",
+    "JSON",
+]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Intended Audience :: Developers",
+    "Topic :: Database",
+    "Topic :: Database :: Database Engines/Servers",
+    "Topic :: Utilities",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/adityaSiso/rwodb"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "rowdb",
+    "tests",
+]
+
+[tool.hatch.build.targets.wheel]
+include = ["rowdb"]
