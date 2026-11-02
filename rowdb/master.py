@@ -1,3 +1,8 @@
+from .exceptions import (
+    ActivePartitionNotFoundException,
+    MasterDataNotFoundException,
+    PartitionNotFoundException,
+)
 from .storage import JsonStorage
 
 
@@ -38,7 +43,7 @@ class Master:
     def row_id(self, value):
         
         if not isinstance(value, int):
-            raise ValueError("row_id must be an integer.")
+            raise TypeError("row_id must be an integer.")
 
         if value < 0:
             raise ValueError("row_id must be a non-negative integer.")
@@ -46,12 +51,12 @@ class Master:
         if self.row_id - value > 1:
             raise ValueError("row_id can only be incremented by 1.")
 
-        if self.is_partition_size_limit_reached():
-            self.update_partition_search_key()
-            self.add_partition()
-
+        partition_limit_reached = self.is_partition_size_limit_reached()
         self._next_row_id = value
         self.master_data["next_row_id"] = value
+        if partition_limit_reached:
+            self.update_partition_search_key()
+            self.add_partition()
         self.storage.write(self.master_data)
 
     def advance_row_id(self, count: int):
@@ -109,7 +114,7 @@ class Master:
         """
         partitions = self.master_data.get("partitions")
         if partitions is None:
-            raise ValueError("Master data is not initialized.")
+            raise PartitionNotFoundException("Master data is not initialized.")
         return len(partitions)
 
     def add_partition(self):
@@ -138,7 +143,7 @@ class Master:
         """
         partitions = self.master_data.get("partitions")
         if partitions is None:
-            raise ValueError("Master data is not initialized.")
+            raise MasterDataNotFoundException("Master data is not initialized.")
 
         for partition in partitions:
             start_row_id = partition["start_row_id"]
@@ -153,18 +158,18 @@ class Master:
         """
         active_partition = self.get_active_partition()
         if active_partition is None:
-            raise ValueError("Active partition is not set.")
+            raise ActivePartitionNotFoundException("Active partition is not set.")
 
         partitions = self.master_data.get("partitions")
         if partitions is None:
-            raise ValueError("Master data is not initialized.")
+            raise MasterDataNotFoundException("Master data is not initialized.")
 
         for partition in partitions:
             if partition["name"] == active_partition:
                 partition["end_row_id"] = self._next_row_id
                 break
         else:
-            raise ValueError("Active partition not found in master data.")
+            raise ActivePartitionNotFoundException("Active partition not found in master data.")
 
         self.storage.write(self.master_data)
 
@@ -177,7 +182,7 @@ class Master:
         """
         master_data = self.storage.read()
         if master_data is None:
-            raise ValueError("Master data is not initialized.")
+            raise MasterDataNotFoundException("Master data is not initialized.")
         partition_size = self.rowdb._storage.get_size()
         return partition_size >= self.partition_size_limit
 

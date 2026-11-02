@@ -1,6 +1,6 @@
 [project]
 name = "rowdb"
-version = "0.2.0"
+version = "0.3.0"
 description = "RowDB is a flexible, open-source key-value database that stores data natively as NDJSON."
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
@@ -30,7 +30,20 @@ Homepage = "https://github.com/adityaSiso/rwodb"
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.11.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=rowdb --cov-branch --cov-report=term-missing --cov-fail-under=80"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 79
+
+[tool.ruff.lint]
+extend-select = ["SIM115", "SIM117"]
 
 [build-system]
 requires = ["hatchling"]
