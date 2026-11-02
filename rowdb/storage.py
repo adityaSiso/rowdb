@@ -1,6 +1,6 @@
-from abc import ABC, abstractmethod
-import os
 import json
+import os
+from abc import ABC, abstractmethod
 from typing import Any
 
 
@@ -38,7 +38,7 @@ class Storage(ABC):
         if not os.path.exists(self.full_path):
             touch(self.full_path)
 
-        self.file = open(self.full_path, mode=access_mode)
+        self.file = open(self.full_path, mode=access_mode)  # noqa: SIM115
 
     @abstractmethod
     def read(self, key: Any = None):
@@ -65,7 +65,14 @@ class Storage(ABC):
         Close the storage file. It's a good practice to close the 
         file after operations are done to free up system resources.
         """
-        self.file.close()
+        if not self.file.closed:
+            self.file.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
 
     def get_size(self):
         """
@@ -119,7 +126,7 @@ class NDJsonStorage(Storage):
         """
         records = data if isinstance(data, list) else [data]
         if not all(isinstance(record, dict) for record in records):
-            raise ValueError("Data must be a dictionary or a list of dictionaries.")
+            raise TypeError("Data must be a dictionary or a list of dictionaries.")
         serialized_data = ''.join(
             f'{json.dumps(record)}\n' for record in records
         )
@@ -170,7 +177,7 @@ class JsonStorage(Storage):
                      written as JSON objects.
         """
         if not isinstance(data, dict):
-            raise ValueError("Data must be of type dictionary.")
+            raise TypeError("Data must be of type dictionary.")
         serialized_data = json.dumps(data, indent=4)
         self.file.seek(0)
         self.file.truncate()

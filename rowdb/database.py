@@ -2,8 +2,9 @@ import json
 import shutil
 from typing import Any
 
-from .storage import NDJsonStorage
+from .exceptions import RowNotFoundException
 from .master import load_master
+from .storage import NDJsonStorage
 
 
 class RowDB:
@@ -29,12 +30,11 @@ class RowDB:
         # Initialize the master collection
         self.master = load_master(self)
 
-        # Initialize the storage for the active partition
-        if self.master.get_active_partition() is None:
+        active_partition = self.master.get_active_partition()
+        if active_partition is None:
             self.master.add_partition()
-        self._storage = RowDB.default_storage_class(
-            self.db, self.master.get_active_partition(),
-        )
+        else:
+            self.update_storage(active_partition)
 
     def update_storage(self, partition_name: str):
         """
@@ -42,9 +42,19 @@ class RowDB:
 
         :param partition_name: The name of the new partition.
         """
+        current_storage = getattr(self, "_storage", None)
+        if current_storage is not None:
+            current_storage.close()
         self._storage = RowDB.default_storage_class(
             self.db, partition_name,
         )
+
+    def close(self):
+        """Close the active partition and master storage files."""
+        current_storage = getattr(self, "_storage", None)
+        if current_storage is not None:
+            current_storage.close()
+        self.master.storage.close()
 
     def insert(self, data: dict) -> int:
         """
@@ -54,7 +64,7 @@ class RowDB:
         :return: The row ID of the inserted record.
         """
         if not isinstance(data, dict):
-            raise ValueError("Data must be of type dictionary.")
+            raise TypeError("Data must be of type dictionary.")
         data['row_id'] = self.master.row_id
         self._storage.write(data)
         self.master.row_id += 1
@@ -66,10 +76,10 @@ class RowDB:
         Insert multiple records into the RowDB.
         """
         if not isinstance(data, list):
-            raise ValueError("Data must be a list of dictionaries.")
+            raise TypeError("Data must be a list of dictionaries.")
 
         if not all(isinstance(record, dict) for record in data):
-            raise ValueError("Data must be a list of dictionaries.")
+            raise TypeError("Data must be a list of dictionaries.")
 
         first_row_id = self.master.row_id
         row_ids = list(range(first_row_id, first_row_id + len(data)))
@@ -92,29 +102,20 @@ class RowDB:
         partition_name = self.master.get_partition_by_row_id(row_id)
 
         if partition_name is None:
-            raise ValueError(f"No data found for row_id: {row_id}")
+            raise RowNotFoundException(f"No data found for row_id: {row_id}")
 
-        storage = RowDB.default_storage_class(
-            self.db, partition_name,
-        )
-
-        def build_record_map() -> dict[int, dict]:
-            """
-            Build a mapping of row_id to records for the current partition.
-            """
-            record_map = {}
+        with RowDB.default_storage_class(self.db, partition_name) as storage:
             records = storage.read()
-            if records is not None:
-                for record in records:
-                    record = json.loads(record)
-                    record_map[record['row_id']] = record
-            return record_map
 
-        record_map = build_record_map()
+        record_map = {}
+        if records is not None:
+            for record in records:
+                record = json.loads(record)
+                record_map[record['row_id']] = record
         try:
             return record_map[row_id]
         except KeyError:
-            raise ValueError(f"No data found for row_id: {row_id}")
+            raise RowNotFoundException(f"No data found for row_id: {row_id}")
 
     def retrieve_all(self) -> list[dict]:
         """
@@ -129,10 +130,8 @@ class RowDB:
             if (partition_name is None or 
                 not partition_name.startswith(self.partition_prefix)):
                 continue
-            storage = RowDB.default_storage_class(
-                self.db, partition_name,
-            )
-            records = storage.read()
+            with RowDB.default_storage_class(self.db, partition_name) as storage:
+                records = storage.read()
             if records is not None:
                 data = [json.loads(record) for record in records]
                 all_records.extend(data)
@@ -145,9 +144,9 @@ class RowDB:
 
         :param partition_prefix: The prefix of the partition to be dropped.
         """
-        ...
 
     def dropDatabase(self):
         """
         Drop the entire database (directory) and all its collections."""
+        self.close()
         shutil.rmtree(self.db)
