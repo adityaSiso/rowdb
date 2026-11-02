@@ -1,6 +1,6 @@
 [project]
 name = "rowdb"
-version = "0.1.0"
+version = "0.2.0"
 description = "RowDB is a flexible, open-source key-value database that stores data natively as NDJSON."
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
@@ -8,6 +8,7 @@ keywords = [
     "database",
     "nosql",
     "JSON",
+    "partition",
 ]
 classifiers = [
     "Development Status :: 1 - Planning",
