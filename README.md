@@ -4,7 +4,7 @@
 
 # RowDB
 
-RowDB is a lightweight file-based document database built using pure Python. It stores records as newline-delimited JSON (NDJSON) objects and organizes them into partitions, it is intended for small applications that need simple, local document storage without the overhead of running a database server.
+RowDB is a lightweight, file-based document database written in pure Python. It is designed for small Python applications that want serverless persistence in inspectable NDJSON files: writes append to a partition, and row ID ranges direct lookups to the relevant partition.
 
 RowDB is:
 
