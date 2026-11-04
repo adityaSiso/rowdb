@@ -1,7 +1,7 @@
 [project]
 name = "rowdb"
 version = "0.3.0"
-description = "RowDB is a flexible, open-source key-value database that stores data natively as NDJSON."
+description = "A file-based Python document database using append-oriented NDJSON storage."
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 keywords = [
@@ -11,7 +11,7 @@ keywords = [
     "partition",
 ]
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Topic :: Database",
     "Topic :: Database :: Database Engines/Servers",
@@ -25,7 +25,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/adityaSiso/rwodb"
+Homepage = "https://github.com/adityaSiso/rowdb"
 
 [dependency-groups]
 dev = [
