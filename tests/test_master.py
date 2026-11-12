@@ -56,10 +56,10 @@ def test_row_id_setter_rejects_invalid_values(db, value, error_type, message):
         db.master.row_id = value
 
 
-def test_row_id_setter_rejects_decreasing_by_more_than_one(db):
+def test_row_id_setter_rejects_decreasing(db):
     db.master.advance_row_id(3)
 
-    with pytest.raises(ValueError, match="incremented by 1"):
+    with pytest.raises(ValueError, match="cannot be decreased"):
         db.master.row_id = 1
 
 
@@ -81,8 +81,8 @@ def test_advance_row_id_rotates_full_partition(db):
 
     assert db.master.row_id == 2
     assert db.master.master_data["partitions"] == [
-        {"start_row_id": 0, "end_row_id": 2, "name": "part-1"},
-        {"start_row_id": 2, "end_row_id": None, "name": "part-2"},
+        {"start_row_id": 0, "end_row_id": 0, "name": "part-1"},
+        {"start_row_id": 0, "end_row_id": None, "name": "part-2"},
     ]
     assert db.master.get_active_partition() == "part-2"
 
@@ -146,7 +146,7 @@ def test_partition_size_limit_check(db):
 
 
 def test_partition_size_check_rejects_missing_master_data(db, monkeypatch):
-    monkeypatch.setattr(db.master.storage, "read", lambda key=None: None)
+    db.master.master_data = None
 
     with pytest.raises(MasterDataNotFoundException):
         db.master.is_partition_size_limit_reached()

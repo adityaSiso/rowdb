@@ -2,9 +2,10 @@ import json
 import shutil
 from typing import Any
 
-from .exceptions import RowNotFoundException
+from .exceptions import CorruptedPartitionDataException, RowNotFoundException
+from .locking import DatabaseLock
 from .master import load_master
-from .storage import NDJsonStorage
+from .storage import NDJsonStorage, validate_filename_component
 
 
 class RowDB:
@@ -27,14 +28,22 @@ class RowDB:
         self.partition_prefix = (partition_prefix 
             if partition_prefix else RowDB.default_partition_prefix
         )
-        # Initialize the master collection
-        self.master = load_master(self)
+        validate_filename_component(self.partition_prefix)
 
-        active_partition = self.master.get_active_partition()
-        if active_partition is None:
-            self.master.add_partition()
-        else:
-            self.update_storage(active_partition)
+        # The initial implementation supports one open writer per database.
+        # Holding this OS lock prevents stale instances from allocating an ID.
+        self._lock = DatabaseLock(self.db)
+        try:
+            self.master = load_master(self)
+
+            active_partition = self.master.get_active_partition()
+            if active_partition is None:
+                self.master.add_partition()
+            else:
+                self.update_storage(active_partition)
+        except BaseException:
+            self.close()
+            raise
 
     def update_storage(self, partition_name: str):
         """
@@ -52,9 +61,18 @@ class RowDB:
     def close(self):
         """Close the active partition and master storage files."""
         current_storage = getattr(self, "_storage", None)
-        if current_storage is not None:
-            current_storage.close()
-        self.master.storage.close()
+        master = getattr(self, "master", None)
+        try:
+            if current_storage is not None:
+                current_storage.close()
+        finally:
+            try:
+                if master is not None:
+                    master.storage.close()
+            finally:
+                lock = getattr(self, "_lock", None)
+                if lock is not None:
+                    lock.close()
 
     def insert(self, data: dict) -> int:
         """
@@ -65,11 +83,12 @@ class RowDB:
         """
         if not isinstance(data, dict):
             raise TypeError("Data must be of type dictionary.")
-        data['row_id'] = self.master.row_id
+        row_id = self.master.advance_row_id(1)[0]
+        data['row_id'] = row_id
         self._storage.write(data)
-        self.master.row_id += 1
+        self.master.rotate_if_full()
 
-        return data['row_id']
+        return row_id
 
     def insert_many(self, data: list[dict]) -> list:
         """
@@ -81,14 +100,15 @@ class RowDB:
         if not all(isinstance(record, dict) for record in data):
             raise TypeError("Data must be a list of dictionaries.")
 
-        first_row_id = self.master.row_id
-        row_ids = list(range(first_row_id, first_row_id + len(data)))
-        for record, row_id in zip(data, row_ids):
-            record['row_id'] = row_id
-
         if data:
-            self._storage.write(data)
-            self.master.advance_row_id(len(data))
+            row_ids = self.master.advance_row_id(len(data))
+            records = [dict(record) for record in data]
+            for record, row_id in zip(records, row_ids):
+                record['row_id'] = row_id
+            self._storage.write(records)
+            self.master.rotate_if_full()
+        else:
+            row_ids = []
 
         return row_ids
 
@@ -111,7 +131,13 @@ class RowDB:
         if records is not None:
             for record in records:
                 record = json.loads(record)
-                record_map[record['row_id']] = record
+                row_id_in_file = record['row_id']
+                if row_id_in_file in record_map:
+                    raise CorruptedPartitionDataException(
+                        f"Duplicate row_id in partition {partition_name}: "
+                        f"{row_id_in_file}"
+                    )
+                record_map[row_id_in_file] = record
         try:
             return record_map[row_id]
         except KeyError:
@@ -125,6 +151,7 @@ class RowDB:
         """
         partitions = self.master.master_data.get("partitions", [])
         all_records = []
+        seen_row_ids = set()
         for partition in partitions:
             partition_name = partition.get("name")
             if (partition_name is None or 
@@ -134,6 +161,13 @@ class RowDB:
                 records = storage.read()
             if records is not None:
                 data = [json.loads(record) for record in records]
+                for record in data:
+                    row_id = record['row_id']
+                    if row_id in seen_row_ids:
+                        raise CorruptedPartitionDataException(
+                            f"Duplicate row_id in database: {row_id}"
+                        )
+                    seen_row_ids.add(row_id)
                 all_records.extend(data)
 
         return all_records

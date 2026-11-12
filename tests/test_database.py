@@ -3,7 +3,11 @@ import json
 import pytest
 
 from rowdb import RowDB
-from rowdb.exceptions import RowNotFoundException
+from rowdb.exceptions import (
+    CorruptedPartitionDataException,
+    DatabaseLockedException,
+    RowNotFoundException,
+)
 
 
 def test_insert_retrieve_and_reopen_database(tmp_path):
@@ -20,6 +24,105 @@ def test_insert_retrieve_and_reopen_database(tmp_path):
     reopened = RowDB(database_path)
     assert reopened.retrieve(row_id) == {"name": "Ada", "row_id": 0}
     reopened.close()
+
+
+def test_second_open_is_rejected_until_first_handle_closes(tmp_path):
+    database_path = tmp_path / "database"
+    first = RowDB(database_path)
+
+    with pytest.raises(DatabaseLockedException, match="already open"):
+        RowDB(database_path)
+
+    first.close()
+    reopened = RowDB(database_path)
+    reopened.close()
+
+
+def test_failed_id_reservation_does_not_append_or_advance_id(
+    tmp_path, monkeypatch
+):
+    database_path = tmp_path / "database"
+    db = RowDB(database_path)
+
+    def fail_reservation(_data):
+        raise OSError("simulated master write failure")
+
+    monkeypatch.setattr(db.master.storage, "write", fail_reservation)
+    with pytest.raises(OSError, match="simulated master write failure"):
+        db.insert({"name": "not committed"})
+
+    assert db.master.row_id == 0
+    assert db._storage.get_size() == 0
+    db.close()
+
+    reopened = RowDB(database_path)
+    assert reopened.insert({"name": "committed"}) == 0
+    assert reopened.retrieve_all() == [{"name": "committed", "row_id": 0}]
+    reopened.close()
+
+
+def test_failed_append_does_not_reuse_reserved_id(tmp_path, monkeypatch):
+    database_path = tmp_path / "database"
+    db = RowDB(database_path)
+
+    def fail_append(_data):
+        raise OSError("simulated partition write failure")
+
+    monkeypatch.setattr(db._storage, "write", fail_append)
+    with pytest.raises(OSError, match="simulated partition write failure"):
+        db.insert({"name": "not committed"})
+
+    assert db.master.row_id == 1
+    db.close()
+
+    reopened = RowDB(database_path)
+    assert reopened.insert({"name": "next"}) == 1
+    assert reopened.retrieve_all() == [{"name": "next", "row_id": 1}]
+    reopened.close()
+
+
+@pytest.mark.parametrize(
+    "prefix", ["../outside-", "nested/part-", r"nested\part-", "C:part-"]
+)
+def test_partition_prefix_must_be_a_filename_component(tmp_path, prefix):
+    database_path = tmp_path / "database"
+
+    with pytest.raises(ValueError, match="single path component"):
+        RowDB(database_path, partition_prefix=prefix)
+
+    assert not database_path.exists()
+
+
+def test_partition_name_from_manifest_cannot_escape_database(tmp_path):
+    database_path = tmp_path / "database"
+    db = RowDB(database_path)
+    db.close()
+    (database_path / "master.json").write_text(json.dumps({
+        "active_partition": "../escaped",
+        "partitions": [
+            {"start_row_id": 0, "end_row_id": None, "name": "../escaped"}
+        ],
+        "next_row_id": 0,
+    }))
+
+    with pytest.raises(ValueError, match="single path component"):
+        RowDB(database_path)
+
+    assert not (tmp_path / "escaped.ndjson").exists()
+    with pytest.raises(ValueError, match="single path component"):
+        RowDB(database_path)
+
+
+def test_retrieve_all_rejects_duplicate_row_ids(tmp_path):
+    db = RowDB(tmp_path / "database")
+    db.insert({"name": "first"})
+    db._storage.write({"name": "duplicate", "row_id": 0})
+    db._storage.file.flush()
+
+    with pytest.raises(CorruptedPartitionDataException, match="Duplicate row_id"):
+        db.retrieve_all()
+
+    db.close()
 
 
 def test_insert_many_returns_row_ids_and_handles_empty_batch(tmp_path):

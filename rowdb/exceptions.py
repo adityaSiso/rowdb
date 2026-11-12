@@ -21,3 +21,7 @@ class CorruptedPartitionDataException(RowDBException):
 
 class RowNotFoundException(RowDBException):
     """Exception raised when a specified row is not found in the database."""
+
+
+class DatabaseLockedException(RowDBException):
+    """Exception raised when another RowDB instance owns the database lock."""

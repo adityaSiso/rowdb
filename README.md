@@ -8,9 +8,10 @@ RowDB is a lightweight, file-based document database written in pure Python. It 
 
 RowDB is:
 
-- **Document-oriented:** Store records as Python dictionaries, each assigned a unique, sequential `row_id`.
+- **Document-oriented:** Store records as Python dictionaries, each assigned a unique, monotonically increasing `row_id`.
 - **Append-focused:** Inserts append records to NDJSON files, making RowDB suitable for workloads with frequent inserts.
 - **Partitioned:** The default partition-rotation threshold is 4 Megabytes. Row ID ranges in the metadata select the partition for a lookup, which then scans that partition's records.
+- **Single-writer:** Only one open `RowDB` handle may own a database directory at a time. A second open raises `DatabaseLockedException` until the first handle is closed.
 
 ## Supported Python Versions
 
@@ -64,6 +65,8 @@ my_database/
 ```
 
 `master.json` tracks the next row ID, the active partition, and the row ID range for each partition. Each line in a partition file is a JSON record with its assigned `row_id`. `insert()` and `insert_many()` append records; `retrieve(row_id)` uses the master metadata to find the partition, while `retrieve_all()` reads records from all registered partitions.
+
+Row IDs increase monotonically. RowDB reserves IDs in `master.json` before appending records, so a failed append can leave a gap, but a reserved ID is not reused. Close a database handle with `db.close()` when finished so another handle can open it.
 
 ## Feedback and Contributions
 

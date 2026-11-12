@@ -1,7 +1,23 @@
 import json
 import os
+import tempfile
 from abc import ABC, abstractmethod
 from typing import Any
+
+
+def validate_filename_component(filename: str) -> str:
+    """Reject names that could escape a database directory on either OS."""
+    if not isinstance(filename, str) or not filename:
+        raise ValueError("Storage filename must be a non-empty string.")
+    if (
+        filename in {'.', '..'}
+        or '\x00' in filename
+        or '/' in filename
+        or '\\' in filename
+        or ':' in filename
+    ):
+        raise ValueError("Storage filename must be a single path component.")
+    return filename
 
 
 def touch(path: str):
@@ -30,10 +46,19 @@ class Storage(ABC):
         :param access_mode: The mode in which the file should be opened. 
                             Default is 'a+' (append and read).
         """
-        if not os.path.isdir(path):
-            os.makedirs(path)
+        validate_filename_component(filename)
 
-        self.full_path = f'{path}/{filename}{self.extension}'
+        path = os.path.abspath(os.fsdecode(os.fspath(path)))
+        os.makedirs(path, exist_ok=True)
+        self.full_path = os.path.abspath(
+            os.path.join(path, f'{filename}{self.extension}')
+        )
+        try:
+            common_path = os.path.commonpath((path, self.full_path))
+        except ValueError as error:
+            raise ValueError("Storage file must stay inside its database directory.") from error
+        if os.path.normcase(common_path) != os.path.normcase(path):
+            raise ValueError("Storage file must stay inside its database directory.")
 
         if not os.path.exists(self.full_path):
             touch(self.full_path)
@@ -179,7 +204,34 @@ class JsonStorage(Storage):
         if not isinstance(data, dict):
             raise TypeError("Data must be of type dictionary.")
         serialized_data = json.dumps(data, indent=4)
-        self.file.seek(0)
-        self.file.truncate()
-        self.file.write(serialized_data)
-        self.file.flush()
+        if self.file.closed:
+            raise ValueError("I/O operation on closed JSON storage.")
+
+        directory = os.path.dirname(self.full_path)
+        fd, temp_path = tempfile.mkstemp(
+            prefix=f'.{os.path.basename(self.full_path)}.',
+            suffix='.tmp',
+            dir=directory,
+        )
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as temp_file:
+                temp_file.write(serialized_data)
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
+
+            self.file.close()
+            try:
+                os.replace(temp_path, self.full_path)
+            except Exception:
+                self.file = open(  # noqa: SIM115
+                    self.full_path, mode='r+', encoding='utf-8'
+                )
+                raise
+
+            temp_path = None
+            self.file = open(  # noqa: SIM115
+                self.full_path, mode='r+', encoding='utf-8'
+            )
+        finally:
+            if temp_path is not None and os.path.exists(temp_path):
+                os.unlink(temp_path)

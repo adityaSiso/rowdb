@@ -40,6 +40,24 @@ def test_json_storage_replaces_existing_document(tmp_path):
     assert json.loads((tmp_path / "master.json").read_text()) == {"state": "new"}
 
 
+def test_json_storage_preserves_old_document_if_replace_fails(
+    tmp_path, monkeypatch
+):
+    storage = JsonStorage(tmp_path, "master")
+    storage.write({"state": "old"})
+
+    def fail_replace(_source, _destination):
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr("rowdb.storage.os.replace", fail_replace)
+    with pytest.raises(OSError, match="simulated replace failure"):
+        storage.write({"state": "new"})
+
+    assert storage.read() == {"state": "old"}
+    assert not storage.file.closed
+    storage.close()
+
+
 def test_json_storage_returns_none_when_empty(tmp_path):
     with JsonStorage(tmp_path, "empty") as storage:
         assert storage.read() is None
