@@ -12,12 +12,25 @@ class Master:
 
     master data format: 
         {
-            "active_partition": "<partX>.ndjson",
-            "partitions": [
-                {"start_row_id": 0, "end_row_id": None, "name": "part-1"},
+            "partitions": {
+                "part-": {
+                    "partitions": [
+                        {"start_row_id": 0, "end_row_id": None, "name": "part-1"},
+                        ...
+                    ]
+                    "active_partition": "part-x",
+                    "next_row_id": xyz,
+                },
+                "custom-partition-name": {
+                    "partitions": [
+                        {"start_row_id": 0, "end_row_id": None, "name": "custom-partition-name"},
+                        ...
+                    ]
+                    "active_partition": "custom-partition-name",
+                    "next_row_id": xyz,
+                }
                 ...
-            ],
-            "next_row_id": xyz, 
+            },
         }
     """
     master_collection_name = "master"
@@ -27,13 +40,13 @@ class Master:
         """
         Initialize the Master instance.
         """
+        self.rowdb = rowdb
         self.storage = JsonStorage(
             path=rowdb.db,
             filename=self.master_collection_name, 
         )
         self.set_defaults()
-        self.rowdb = rowdb
-        self._next_row_id = self.master_data.get("next_row_id")
+        self._next_row_id = self.sub_partition_metadata.get("next_row_id")
 
     @property
     def row_id(self):
@@ -53,7 +66,7 @@ class Master:
 
         partition_limit_reached = self.is_partition_size_limit_reached()
         self._next_row_id = value
-        self.master_data["next_row_id"] = value
+        self.sub_partition_metadata["next_row_id"] = value
         if partition_limit_reached:
             self.update_partition_search_key()
             self.add_partition()
@@ -66,7 +79,7 @@ class Master:
             return
 
         self._next_row_id += count
-        self.master_data["next_row_id"] = self._next_row_id
+        self.sub_partition_metadata["next_row_id"] = self._next_row_id
         if self.is_partition_size_limit_reached():
             self.update_partition_search_key()
             self.add_partition()
@@ -80,19 +93,45 @@ class Master:
         master_data = self.storage.read()
 
         if master_data is None:
-            master_data = {
-                "active_partition": None,
-                "partitions": [],
-                "next_row_id": 0,
+            master_data = {}
+
+            master_data["partitions"] = {
+                self.rowdb.partition_prefix: {
+                    "partitions": [
+                        {
+                            "start_row_id": 0, 
+                            "end_row_id": None, 
+                            "name": f"{self.rowdb.partition_prefix}1"
+                        },
+                    ],
+                    "active_partition": f"{self.rowdb.partition_prefix}1",
+                    "next_row_id": 0,
+                }
             }
             self.storage.write(master_data)
-        elif isinstance(master_data.get("partitions"), dict):
-            active_partition = master_data.get("active_partition")
-            master_data["partitions"] = (
-                [{"start_row_id": 0, "end_row_id": None, "name": active_partition}]
-                if active_partition else []
-            )
-            self.storage.write(master_data)
+            self.sub_partition_metadata = master_data["partitions"][self.rowdb.partition_prefix]
+        else:
+            partitions = master_data.get("partitions")
+            sub_parition = partitions.get(self.rowdb.partition_prefix)
+
+            if sub_parition is None:
+                sub_parition = {
+                    "partitions": [
+                        {
+                            "start_row_id": 0, 
+                            "end_row_id": None, 
+                            "name": f"{self.rowdb.partition_prefix}1"
+                        },
+                    ],
+                    "active_partition": f"{self.rowdb.partition_prefix}1",
+                    
+                }
+                self.sub_partition_metadata = sub_parition
+                partitions[self.rowdb.partition_prefix] = self.sub_partition_metadata
+                master_data["partitions"] = partitions
+                self.storage.write(master_data)
+            else:
+                self.sub_partition_metadata = sub_parition
         self.master_data = master_data
 
     def get_active_partition(self):
@@ -101,7 +140,7 @@ class Master:
 
         :return: The active partition, or None if not found.
         """
-        current_partition = self.storage.read(key="active_partition")
+        current_partition = self.sub_partition_metadata.get("active_partition")
         if current_partition is None:
             return
         return current_partition
@@ -112,7 +151,7 @@ class Master:
 
         :return: The total number of partitions, or 0 if not found.
         """
-        partitions = self.master_data.get("partitions")
+        partitions = self.sub_partition_metadata.get("partitions")
         if partitions is None:
             raise PartitionNotFoundException("Master data is not initialized.")
         return len(partitions)
@@ -125,12 +164,13 @@ class Master:
         """
         new_partition_name = \
             f"{self.rowdb.partition_prefix}{self.get_total_partitions() + 1}"
-        self.master_data["partitions"].append({
+        self.sub_partition_metadata["partitions"].append({
             "start_row_id": self._next_row_id,
             "end_row_id": None,
             "name": new_partition_name,
         })
-        self.master_data["active_partition"] = new_partition_name
+        self.sub_partition_metadata["active_partition"] = new_partition_name
+        self.master_data["partitions"][self.rowdb.partition_prefix] = self.sub_partition_metadata
         self.storage.write(self.master_data)
         self.rowdb.update_storage(new_partition_name)
 
@@ -141,7 +181,7 @@ class Master:
         :param row_id: The row ID to search for.
         :return: The partition name if found, else None.
         """
-        partitions = self.master_data.get("partitions")
+        partitions = self.sub_partition_metadata.get("partitions")
         if partitions is None:
             raise MasterDataNotFoundException("Master data is not initialized.")
 
@@ -160,7 +200,7 @@ class Master:
         if active_partition is None:
             raise ActivePartitionNotFoundException("Active partition is not set.")
 
-        partitions = self.master_data.get("partitions")
+        partitions = self.sub_partition_metadata.get("partitions")
         if partitions is None:
             raise MasterDataNotFoundException("Master data is not initialized.")
 
