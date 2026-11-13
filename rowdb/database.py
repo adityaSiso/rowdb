@@ -123,7 +123,7 @@ class RowDB:
 
         :return: A list of dictionaries containing all records in the JStore.
         """
-        partitions = self.master.master_data.get("partitions", [])
+        partitions = self.master.sub_partition_metadata.get("partitions", [])
         all_records = []
         for partition in partitions:
             partition_name = partition.get("name")
